@@ -101,190 +101,307 @@
     }
   }
 
-  function phaseDefinition(storyName, progress, mode) {
-    var phases;
-
-    if (storyName === "normalization") {
-      phases = [
-        [0.15, "Same physical action"],
-        [0.52, "Apply dataset statistics"],
-        [0.78, "Different normalized values"],
-        [1.01, "Same quantizer, different bins"]
-      ];
-    } else if (storyName === "transfer") {
-      phases = [
-        [0.20, "Learn in Bridge"],
-        [0.45, "Predict action tokens"],
-        [0.76, "Decode with Berkeley UR5 statistics"],
-        [0.93, mode === "dsd" ? "Direction remains fixed" : "Motion direction changes"],
-        [1.01, mode === "dsd" ? "Direction preserved; magnitude may change" : "69.84\u00b0 3-D direction change"]
-      ];
-    } else {
-      phases = [
-        [0.18, "Same geometric path"],
-        [0.72, "Different step sizes"],
-        [0.90, "Tokenize each step"],
-        [1.01, "Same path, different motion tokens"]
-      ];
-    }
-
-    for (var index = 0; index < phases.length; index += 1) {
-      if (progress < phases[index][0]) {
-        return { index: index, text: phases[index][1], total: phases.length };
-      }
-    }
-    return { index: phases.length - 1, text: phases[phases.length - 1][1], total: phases.length };
-  }
-
-  function positionOnPath(dot, path, progress) {
-    if (!dot || !path || typeof path.getTotalLength !== "function" || typeof path.getPointAtLength !== "function") {
+  function positionOnPath(marker, path, progress) {
+    if (!marker || !path || typeof path.getTotalLength !== "function" || typeof path.getPointAtLength !== "function") {
       return;
     }
 
     try {
       var point = path.getPointAtLength(path.getTotalLength() * clamp(progress, 0, 1));
-      var tag = String(dot.tagName || "").toLowerCase();
+      var tag = String(marker.tagName || "").toLowerCase();
       if (tag === "circle" || tag === "ellipse") {
-        dot.setAttribute("cx", String(point.x));
-        dot.setAttribute("cy", String(point.y));
+        marker.setAttribute("cx", String(point.x));
+        marker.setAttribute("cy", String(point.y));
       } else {
-        dot.setAttribute("transform", "translate(" + point.x + " " + point.y + ")");
+        marker.setAttribute("transform", "translate(" + point.x + " " + point.y + ")");
       }
     } catch (_error) {
       // A malformed optional SVG path must not disable the rest of the page.
     }
   }
 
-  function preserveFinalText(node, fallback) {
-    if (!node.dataset.finalText) {
-      node.dataset.finalText = node.dataset.value || node.textContent.trim() || fallback;
-    }
-    return node.dataset.finalText;
-  }
-
-  function tokenNumbers(text) {
-    return (String(text || "").match(/\d+/g) || []).map(Number);
-  }
-
-  function dynamicFastTokenText(controller, fallback) {
-    var slow = controller.speedSlowTokens;
-    var fast = controller.speedFastTokens;
-    if (!slow || !fast || slow.length !== fast.length || !slow.length) return fallback;
-    var denominator = controller.defaultSpeedFactor - 1;
-    var ratio = denominator === 0 ? 1 : (controller.speedFactor - 1) / denominator;
-    return slow.map(function (token, index) {
-      return "#" + Math.round(clamp(token + (fast[index] - token) * ratio, 0, 255));
+  function formatTokens(values) {
+    return values.map(function (value) {
+      return "#" + Math.round(clamp(value, 0, 255));
     }).join(" \u00b7 ");
+  }
+
+  function readNumeric(input, fallback) {
+    if (!input) return fallback;
+    var value = Number(input.value);
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  function readBound(input, fallback) {
+    var value = readNumeric(input, fallback);
+    return Math.abs(value) > 15 ? value / 10 : value;
+  }
+
+  function setBoundInput(input, value) {
+    if (!input) return;
+    var maximum = Math.max(Math.abs(Number(input.min || 0)), Math.abs(Number(input.max || 0)));
+    input.value = String(maximum > 15 ? Math.round(value * 10) : value);
+  }
+
+  function readTransferScale(input) {
+    var value = readNumeric(input, 100);
+    var maximum = input ? Number(input.max || 100) : 100;
+    return clamp(maximum > 4 ? value / 100 : value, 0.20, 2.50);
+  }
+
+  function formatUnitlessVector(values) {
+    return "(" + values.map(function (value) {
+      return formatSigned(value, 3);
+    }).join(", ") + ")";
+  }
+
+  function vectorLength(vector) {
+    return Math.sqrt(vector.reduce(function (sum, value) {
+      return sum + value * value;
+    }, 0));
+  }
+
+  function mixVector(start, end, amount) {
+    return start.map(function (value, index) {
+      return lerp(value, end[index], amount);
+    });
+  }
+
+  function scaleVector(vector, scale) {
+    return vector.map(function (value) { return value * scale; });
+  }
+
+  function vectorAngle(first, second) {
+    var firstLength = vectorLength(first);
+    var secondLength = vectorLength(second);
+    if (firstLength < 1e-8 || secondLength < 1e-8) return 0;
+    var dot = first.reduce(function (sum, value, index) {
+      return sum + value * second[index];
+    }, 0);
+    return Math.acos(clamp(dot / (firstLength * secondLength), -1, 1)) * 180 / Math.PI;
+  }
+
+  function projectedEndpoint(vector, length, originX, originY) {
+    // A compact oblique projection keeps all three axes visible without letting
+    // the comparison arrows dominate the card.
+    var horizontal = vector[0] - 0.55 * vector[1];
+    var vertical = -vector[2] + 0.30 * vector[1];
+    var projectedLength = Math.sqrt(horizontal * horizontal + vertical * vertical) || 1;
+    return {
+      x: originX + horizontal / projectedLength * length,
+      y: originY + vertical / projectedLength * length
+    };
+  }
+
+  function setLineEndpoint(line, vector, length) {
+    if (!line) return;
+    var originX = Number(line.getAttribute("x1")) || 0;
+    var originY = Number(line.getAttribute("y1")) || 0;
+    var point = projectedEndpoint(vector, length, originX, originY);
+    line.setAttribute("x2", point.x.toFixed(2));
+    line.setAttribute("y2", point.y.toFixed(2));
+  }
+
+  function setAngleArc(arc, source, target, radius) {
+    if (!arc) return;
+    var originX = 86;
+    var originY = 192;
+    var sourcePoint = projectedEndpoint(source, radius, originX, originY);
+    var targetPoint = projectedEndpoint(target, radius, originX, originY);
+    var sourceAngle = Math.atan2(sourcePoint.y - originY, sourcePoint.x - originX);
+    var targetAngle = Math.atan2(targetPoint.y - originY, targetPoint.x - originX);
+    var delta = targetAngle - sourceAngle;
+    while (delta > Math.PI) delta -= Math.PI * 2;
+    while (delta < -Math.PI) delta += Math.PI * 2;
+    if (Math.abs(delta) < 0.01) {
+      arc.setAttribute("d", "");
+      return;
+    }
+    var sweep = delta >= 0 ? 1 : 0;
+    arc.setAttribute(
+      "d",
+      "M" + sourcePoint.x.toFixed(2) + " " + sourcePoint.y.toFixed(2) +
+      " A" + radius + " " + radius + " 0 0 " + sweep + " " +
+      targetPoint.x.toFixed(2) + " " + targetPoint.y.toFixed(2)
+    );
   }
 
   function renderSpeed(controller, progress) {
     var article = controller.article;
-    var travel = smoothstep((progress - 0.10) / 0.64);
-    var slowProgress = clamp(travel, 0, 1);
+    var motionProgress = smoothstep(progress);
     var speedFactor = controller.speedFactor || 1.6;
-    var fastProgress = clamp(travel * speedFactor, 0, 1);
+    var fastProgress = clamp(motionProgress * speedFactor, 0, 1);
+    var directionSequence = [
+      [222, 151, 132], [219, 157, 132], [216, 163, 131],
+      [211, 170, 131], [205, 177, 130], [198, 184, 129],
+      [191, 190, 128], [184, 197, 127], [176, 204, 126],
+      [168, 211, 125], [160, 217, 124], [153, 222, 123]
+    ];
+    var slowTokenIndex = Math.min(directionSequence.length - 1, Math.floor(motionProgress * directionSequence.length));
+    var fastTokenIndex = Math.min(directionSequence.length - 1, Math.floor(fastProgress * directionSequence.length));
+    var slowDirectionTokens = directionSequence[slowTokenIndex];
+    var fastDirectionTokens = directionSequence[fastTokenIndex];
+    var slowMagnitude = 0.42;
+    var fastMagnitude = slowMagnitude * speedFactor;
+    var slowRawTokens = slowDirectionTokens.map(function (value) {
+      return 128 + (value - 128) * slowMagnitude;
+    });
+    var fastRawTokens = fastDirectionTokens.map(function (value) {
+      return 128 + (value - 128) * fastMagnitude;
+    });
+    var slowScaleToken = Math.round(128 + 46 * slowMagnitude);
+    var fastScaleToken = Math.round(128 + 46 * fastMagnitude);
 
-    article.style.setProperty("--slow-progress", slowProgress.toFixed(4));
+    article.style.setProperty("--motion-progress", motionProgress.toFixed(4));
+    article.style.setProperty("--slow-progress", motionProgress.toFixed(4));
     article.style.setProperty("--fast-progress", fastProgress.toFixed(4));
     article.style.setProperty("--speed-factor", speedFactor.toFixed(2));
+    article.style.setProperty("--slow-step-scale", slowMagnitude.toFixed(3));
+    article.style.setProperty("--fast-step-scale", fastMagnitude.toFixed(3));
 
-    var slowDot = article.querySelector('[data-role="speed-slow-dot"]');
-    var fastDot = article.querySelector('[data-role="speed-fast-dot"]');
+    var slowMarker = article.querySelector('[data-role="speed-slow-marker"]');
+    var fastMarker = article.querySelector('[data-role="speed-fast-marker"]');
     var slowPath = article.querySelector('[data-role="slow-path"]');
     var fastPath = article.querySelector('[data-role="fast-path"]') || slowPath;
-    positionOnPath(slowDot, slowPath, slowProgress);
-    positionOnPath(fastDot, fastPath, fastProgress);
+    positionOnPath(slowMarker, slowPath, motionProgress);
+    positionOnPath(fastMarker, fastPath, fastProgress);
 
-    var tokenReveal = smoothstep((progress - 0.68) / 0.22);
-    article.style.setProperty("--token-progress", tokenReveal.toFixed(4));
-
-    roleNodes(article, ["speed-slow-token", "slow-token"]).forEach(function (node) {
-      var finalText = preserveFinalText(node, "small-step bin");
-      node.textContent = tokenReveal < 0.08 ? "\u2026" : finalText;
-      node.dataset.visible = tokenReveal > 0.08 ? "true" : "false";
-    });
-    roleNodes(article, ["speed-fast-token", "fast-token"]).forEach(function (node) {
-      var finalText = preserveFinalText(node, "large-step bin");
-      node.textContent = tokenReveal < 0.08 ? "\u2026" : dynamicFastTokenText(controller, finalText);
-      node.dataset.visible = tokenReveal > 0.08 ? "true" : "false";
-    });
-
-    setRoleText(article, ["speed-slow-progress"], Math.round(slowProgress * 100) + "%");
+    // These values never disappear: the current action token is visible for
+    // every sample of the motion, including the initial frame.
+    setRoleText(article, ["speed-raw-slow-token", "speed-slow-token", "slow-token"], formatTokens(slowRawTokens));
+    setRoleText(article, ["speed-raw-fast-token", "speed-fast-token", "fast-token"], formatTokens(fastRawTokens));
+    setRoleText(article, ["speed-dsd-direction-slow"], formatTokens(slowDirectionTokens));
+    setRoleText(article, ["speed-dsd-direction-fast"], formatTokens(fastDirectionTokens));
+    setRoleText(article, ["speed-dsd-scale-slow"], "scale #" + slowScaleToken);
+    setRoleText(article, ["speed-dsd-scale-fast"], "scale #" + fastScaleToken);
+    setRoleText(article, ["speed-slow-progress"], Math.round(motionProgress * 100) + "%");
     setRoleText(article, ["speed-fast-progress"], Math.round(fastProgress * 100) + "%");
     setRoleText(article, ["speed-fast-value", "speed-factor-value"], speedFactor.toFixed(1) + "\u00d7");
+    article.dataset.slowTokenIndex = String(slowTokenIndex + 1);
+    article.dataset.fastTokenIndex = String(fastTokenIndex + 1);
   }
 
   function renderNormalization(controller, progress) {
     var article = controller.article;
-    var mix = clamp((progress - 0.15) / 0.63, 0, 1);
-    var normalizedValue = lerp(0.15, 0.88, mix);
+    var mix = smoothstep(progress);
+    var actionValue = 4;
+    var lowerTarget = controller.statsLowerTarget;
+    var upperTarget = controller.statsUpperTarget;
+
+    // Animate the two endpoints independently. The physical action stays at
+    // 4 mm; only the statistics interval changes around it.
+    var lower = controller.statsManual ? lowerTarget : lerp(controller.statsLowerStart, lowerTarget, mix);
+    var upper = controller.statsManual ? upperTarget : lerp(controller.statsUpperStart, upperTarget, mix);
+    if (upper <= lower + 0.10) upper = lower + 0.10;
+    var normalizedValue = clamp(2 * (actionValue - lower) / (upper - lower) - 1, -1, 1);
     var bin = clamp(Math.floor(((normalizedValue + 1) / 2) * 256), 0, 255);
     var position = ((normalizedValue + 1) / 2) * 100;
+    var domainMinimum = -8;
+    var domainMaximum = 14;
+    var leftPosition = clamp((lower - domainMinimum) / (domainMaximum - domainMinimum) * 100, 0, 100);
+    var rightPosition = clamp((upper - domainMinimum) / (domainMaximum - domainMinimum) * 100, 0, 100);
+    var actionPosition = clamp((actionValue - domainMinimum) / (domainMaximum - domainMinimum) * 100, 0, 100);
 
+    article.style.setProperty("--motion-progress", mix.toFixed(4));
     article.style.setProperty("--stats-mix", mix.toFixed(4));
+    article.style.setProperty("--stats-left", leftPosition.toFixed(2) + "%");
+    article.style.setProperty("--stats-right", rightPosition.toFixed(2) + "%");
+    article.style.setProperty("--stats-lower-position", leftPosition.toFixed(2) + "%");
+    article.style.setProperty("--stats-upper-position", rightPosition.toFixed(2) + "%");
+    article.style.setProperty("--stats-width", Math.max(0, rightPosition - leftPosition).toFixed(2) + "%");
+    article.style.setProperty("--action-position", actionPosition.toFixed(2) + "%");
     article.style.setProperty("--normalized-value", normalizedValue.toFixed(4));
     article.style.setProperty("--normalization-position", position.toFixed(2) + "%");
     article.style.setProperty("--norm-position", position.toFixed(2) + "%");
     article.style.setProperty("--bin-index", String(bin));
 
-    if (controller.statsInput && !controller.statsPointerActive) {
-      setRangeFraction(controller.statsInput, mix);
-    }
-    if (controller.statsInput) {
-      controller.statsInput.setAttribute(
-        "aria-valuetext",
-        "Normalized value " + normalizedValue.toFixed(2) + ", zero-indexed bin " + bin + " of 256"
-      );
-    }
-
     setRoleText(article, ["normalization-value", "normalized-value", "norm-value", "stats-value"], normalizedValue.toFixed(2));
     setRoleText(article, ["normalization-bin", "norm-bin", "stats-bin"], String(bin));
     setRoleText(article, ["normalization-bin-label", "norm-bin-label"], "bin " + bin);
+    setRoleText(article, ["normalization-lower-value"], formatSigned(lower, 1) + " mm");
+    setRoleText(article, ["normalization-upper-value"], formatSigned(upper, 1) + " mm");
+    setRoleText(article, ["normalization-raw-token"], "bin " + bin);
+    setRoleText(article, ["normalization-dsd-direction"], "(0.62, 0.62, 0.47)");
+    setRoleText(article, ["normalization-dsd-token"], "dir #207 \u00b7 #207 \u00b7 #187");
+
+    if (!controller.statsPointerActive && !controller.statsManual) {
+      setBoundInput(controller.statsLowerInput, lower);
+      setBoundInput(controller.statsUpperInput, upper);
+    }
+    if (controller.statsLowerInput) {
+      controller.statsLowerInput.setAttribute("aria-valuetext", "Lower statistics bound " + lower.toFixed(1) + " millimeters");
+    }
+    if (controller.statsUpperInput) {
+      controller.statsUpperInput.setAttribute("aria-valuetext", "Upper statistics bound " + upper.toFixed(1) + " millimeters");
+    }
   }
 
   function renderTransfer(controller, progress) {
     var article = controller.article;
-    var mode = controller.mode || "raw";
-    var change = smoothstep((progress - 0.58) / 0.35);
-    var angle = mode === "dsd" ? 0 : 69.84 * change;
-    var source = [2.90, -4.60, 3.40];
-    var target = [2.18, -2.02, -2.19];
-    var output = source.map(function (value, index) {
-      return mode === "dsd" ? value : lerp(value, target[index], change);
-    });
+    var change = smoothstep(progress);
+    var inputScale = controller.transferInputScale;
+    var baseSource = [2.90, -4.60, 3.40];
+    var source = scaleVector(baseSource, inputScale);
+    var rawTarget = [
+      0.65 * source[0] + 0.295,
+      0.55 * source[1] + 0.510,
+      -0.45 * source[2] - 0.660
+    ];
+    var dsdTarget = scaleVector(source, 0.82 + 0.10 * inputScale);
+    var rawOutput = mixVector(source, rawTarget, change);
+    var dsdOutput = mixVector(source, dsdTarget, change);
+    var rawAngle = vectorAngle(source, rawOutput);
+    var fullRawAngle = vectorAngle(source, rawTarget);
+    if (Math.abs(inputScale - 1) < 0.0001 && fullRawAngle > 1e-8) {
+      rawAngle = rawAngle * 69.84 / fullRawAngle;
+      fullRawAngle = 69.84;
+    }
 
-    article.dataset.mode = mode;
+    article.dataset.mode = "comparison";
     article.style.setProperty("--transfer-mix", change.toFixed(4));
-    article.style.setProperty("--transfer-angle", angle.toFixed(2) + "deg");
-    article.style.setProperty("--transfer-angle-value", angle.toFixed(4));
-    article.style.setProperty("--transfer-x", output[0].toFixed(4));
-    article.style.setProperty("--transfer-y", output[1].toFixed(4));
-    article.style.setProperty("--transfer-z", output[2].toFixed(4));
-    article.style.setProperty("--mode-dsd", mode === "dsd" ? "1" : "0");
-    article.style.setProperty("--target-opacity", mode === "raw" ? change.toFixed(4) : "0");
-    article.style.setProperty("--dsd-opacity", mode === "dsd" ? change.toFixed(4) : "0");
+    article.style.setProperty("--motion-progress", change.toFixed(4));
+    article.style.setProperty("--transfer-angle", rawAngle.toFixed(2) + "deg");
+    article.style.setProperty("--transfer-angle-value", rawAngle.toFixed(4));
+    article.style.setProperty("--transfer-x", rawOutput[0].toFixed(4));
+    article.style.setProperty("--transfer-y", rawOutput[1].toFixed(4));
+    article.style.setProperty("--transfer-z", rawOutput[2].toFixed(4));
+    article.style.setProperty("--target-opacity", (0.20 + 0.80 * change).toFixed(4));
+    article.style.setProperty("--dsd-opacity", (0.20 + 0.80 * change).toFixed(4));
 
-    setRoleText(article, ["transfer-angle", "angle-readout"], angle.toFixed(2) + "\u00b0");
-    setRoleText(article, ["transfer-summary-label"], mode === "dsd" ? "DSD result" : "Observed mismatch");
-    setRoleText(article, ["transfer-angle-suffix"], mode === "dsd" ? " · direction preserved" : " direction change");
+    setRoleText(article, ["transfer-angle", "transfer-raw-angle", "angle-readout"], rawAngle.toFixed(2) + "\u00b0");
+    setRoleText(article, ["transfer-summary-label"], "Raw vs DSD");
+    setRoleText(article, ["transfer-angle-suffix"], " raw direction change · DSD 0°");
     setRoleText(article, ["transfer-source", "source-vector"], formatVector(source));
-    setRoleText(article, ["transfer-output", "target-vector"], mode === "dsd" ? "Direction preserved" : formatVector(output));
+    setRoleText(article, ["transfer-output", "transfer-raw-output", "target-vector"], formatVector(rawOutput));
+    setRoleText(article, ["transfer-dsd-output"], formatVector(dsdOutput));
+    setRoleText(article, ["transfer-input-value"], formatUnitlessVector(scaleVector([0.109, -0.101, -0.110], inputScale)));
     setRoleText(
       article,
       ["transfer-result", "transfer-summary"],
-      mode === "dsd" ? "Direction preserved; magnitude may change" : angle.toFixed(2) + "\u00b0 3-D direction change"
+      rawAngle.toFixed(2) + "\u00b0 raw change; DSD preserves direction"
     );
 
+    var sourceVector = article.querySelector('[data-role="transfer-source-vector"]');
     var outputVector = article.querySelector('[data-role="transfer-output-vector"]');
-    if (outputVector) {
-      outputVector.setAttribute("x2", String(lerp(425, 493, change)));
-      outputVector.setAttribute("y2", String(lerp(82, 231, change)));
+    var dsdVector = article.querySelector('[data-role="transfer-dsd-vector"]');
+    var dsdSourceVector = article.querySelector('[data-role="transfer-dsd-source-vector"], .sourceVectorGhost');
+    var angleArc = article.querySelector('[data-role="transfer-angle-arc"]');
+    var referenceLength = vectorLength(baseSource);
+    var sourceLength = 88 * clamp(vectorLength(source) / referenceLength, 0, 1.20);
+    var rawLength = 88 * clamp(vectorLength(rawOutput) / referenceLength, 0, 1.20);
+    var dsdLength = 88 * clamp(vectorLength(dsdOutput) / referenceLength, 0, 1.20);
+    setLineEndpoint(sourceVector, source, sourceLength);
+    setLineEndpoint(outputVector, rawOutput, rawLength);
+    setLineEndpoint(dsdSourceVector, source, sourceLength);
+    setLineEndpoint(dsdVector, dsdOutput, dsdLength);
+    setAngleArc(angleArc, source, rawOutput, 42);
+    setRoleText(article, ["transfer-output-label"], "Raw: target-stat denormalization");
+    setRoleText(article, ["transfer-dsd-label"], "DSD: direction preserved");
+
+    if (controller.transferInput) {
+      controller.transferInput.setAttribute("aria-valuetext", Math.round(inputScale * 100) + "% of the example input action");
     }
-    setRoleText(
-      article,
-      ["transfer-output-label"],
-      mode === "dsd" ? "direction preserved" : "decoded with UR5 stats"
-    );
+    article.dataset.rawAngle = fullRawAngle.toFixed(2);
   }
 
   function StoryController(article) {
@@ -296,25 +413,37 @@
     this.resetButton = article.querySelector('[data-action="reset"]');
     this.timeline = article.querySelector('input[data-role="timeline"]');
     this.phaseOutput = article.querySelector('output[data-role="phase"], [data-role="phase"]');
-    this.statsInput = article.querySelector('input[data-role="stats-mix"]');
+    this.elapsedOutput = article.querySelector('[data-role="elapsed"]');
+    this.durationOutput = article.querySelector('[data-role="duration"]');
+    this.statsLowerInput = article.querySelector('input[data-role="normalization-lower"], input[data-role="stats-left"]');
+    this.statsUpperInput = article.querySelector('input[data-role="normalization-upper"], input[data-role="stats-right"]');
     this.speedInput = article.querySelector('input[data-role="speed-factor"]');
+    this.transferInput = article.querySelector('input[data-role="transfer-input"]');
     this.modeButtons = Array.prototype.slice.call(article.querySelectorAll('button[data-mode="raw"], button[data-mode="dsd"]'));
     this.progress = this.timeline ? rangeFraction(this.timeline) : 0;
     this.playing = false;
     this.visible = true;
     this.frame = 0;
     this.lastFrameTime = 0;
-    this.phaseIndex = -1;
     this.pointerActive = false;
     this.resumeAfterPointer = false;
     this.statsPointerActive = false;
+    this.statsManual = false;
     this.mode = "raw";
     this.speedFactor = this.speedInput ? Number(this.speedInput.value || 160) / 100 : 1.6;
-    this.defaultSpeedFactor = this.speedFactor;
-    var slowToken = article.querySelector('[data-role="speed-slow-token"], [data-role="slow-token"]');
-    var fastToken = article.querySelector('[data-role="speed-fast-token"], [data-role="fast-token"]');
-    this.speedSlowTokens = slowToken ? tokenNumbers(slowToken.textContent) : null;
-    this.speedFastTokens = fastToken ? tokenNumbers(fastToken.textContent) : null;
+    this.statsLowerStart = readBound(this.statsLowerInput, -4.00);
+    this.statsUpperStart = readBound(this.statsUpperInput, 9.90);
+    this.statsLowerTarget = -0.50;
+    this.statsUpperTarget = 4.29;
+    this.transferInputScale = readTransferScale(this.transferInput);
+
+    // Old sample/playhead circles were read as unexplained red dots. New
+    // markup uses compact token markers; suppress the legacy dots if a stale
+    // static export still contains them.
+    Array.prototype.slice.call(article.querySelectorAll('.sampleDot, [data-role="speed-slow-dot"], [data-role="speed-fast-dot"]')).forEach(function (node) {
+      node.hidden = true;
+      node.style.display = "none";
+    });
 
     var selectedMode = this.modeButtons.find(function (button) {
       return button.getAttribute("aria-pressed") === "true" || button.dataset.active === "true";
@@ -352,10 +481,12 @@
       this.timeline.addEventListener("pointerdown", function () {
         controller.pointerActive = true;
         controller.resumeAfterPointer = controller.playing;
+        if (controller.name === "normalization") controller.statsManual = false;
         controller.pause("scrub");
       });
       this.timeline.addEventListener("input", function () {
         if (!controller.pointerActive) controller.pause("scrub");
+        if (controller.name === "normalization") controller.statsManual = false;
         controller.setProgress(rangeFraction(controller.timeline), true);
       });
       ["pointerup", "pointercancel"].forEach(function (eventName) {
@@ -371,21 +502,32 @@
       });
     }
 
-    if (this.statsInput && this.name === "normalization") {
-      this.statsInput.addEventListener("pointerdown", function () {
-        controller.statsPointerActive = true;
-        controller.pause("scrub");
-      });
-      this.statsInput.addEventListener("input", function () {
-        controller.pause("scrub");
-        controller.statsPointerActive = true;
-        var mix = rangeFraction(controller.statsInput);
-        controller.setProgress(lerp(0.15, 0.78, mix), true);
-      });
-      ["pointerup", "pointercancel", "change", "blur"].forEach(function (eventName) {
-        controller.statsInput.addEventListener(eventName, function () {
-          controller.statsPointerActive = false;
-          controller.render(true);
+    if (this.name === "normalization") {
+      [this.statsLowerInput, this.statsUpperInput].filter(Boolean).forEach(function (input) {
+        input.addEventListener("pointerdown", function () {
+          controller.statsPointerActive = true;
+          controller.statsManual = true;
+          controller.pause("bound-adjustment");
+        });
+        input.addEventListener("input", function () {
+          controller.pause("bound-adjustment");
+          controller.statsPointerActive = true;
+          controller.statsManual = true;
+          var lower = readBound(controller.statsLowerInput, controller.statsLowerTarget);
+          var upper = readBound(controller.statsUpperInput, controller.statsUpperTarget);
+          if (upper <= lower + 0.10) {
+            if (input === controller.statsLowerInput) lower = upper - 0.10;
+            else upper = lower + 0.10;
+          }
+          controller.statsLowerTarget = lower;
+          controller.statsUpperTarget = upper;
+          controller.setProgress(1, true);
+        });
+        ["pointerup", "pointercancel", "change", "blur"].forEach(function (eventName) {
+          input.addEventListener(eventName, function () {
+            controller.statsPointerActive = false;
+            controller.render(true);
+          });
         });
       });
     }
@@ -397,6 +539,14 @@
         controller.render(true);
       });
       this.speedInput.setAttribute("aria-valuetext", this.speedFactor.toFixed(1) + " times speed");
+    }
+
+    if (this.transferInput && this.name === "transfer") {
+      this.transferInput.addEventListener("input", function () {
+        controller.pause("input-adjustment");
+        controller.transferInputScale = readTransferScale(controller.transferInput);
+        controller.setProgress(1, true);
+      });
     }
 
     this.modeButtons.forEach(function (button, index) {
@@ -442,7 +592,10 @@
 
   StoryController.prototype.play = function () {
     if (!this.visible || document.hidden) return;
-    if (this.progress >= 1) this.setProgress(0, true);
+    if (this.progress >= 1) {
+      if (this.name === "normalization") this.statsManual = false;
+      this.setProgress(0, true);
+    }
     if (activeStory && activeStory !== this) activeStory.pause("another-story");
     activeStory = this;
     this.lastFrameTime = 0;
@@ -450,7 +603,7 @@
     this.frame = window.requestAnimationFrame(this.tick.bind(this));
   };
 
-  StoryController.prototype.pause = function (_reason) {
+  StoryController.prototype.pause = function () {
     if (this.frame) window.cancelAnimationFrame(this.frame);
     this.frame = 0;
     this.lastFrameTime = 0;
@@ -460,6 +613,11 @@
 
   StoryController.prototype.reset = function () {
     this.pause("reset");
+    if (this.name === "normalization") {
+      this.statsManual = false;
+      this.statsLowerTarget = -0.50;
+      this.statsUpperTarget = 4.29;
+    }
     this.setProgress(0, true);
   };
 
@@ -483,8 +641,12 @@
     this.render(Boolean(announce));
   };
 
-  StoryController.prototype.render = function (announce) {
+  StoryController.prototype.render = function () {
     var progress = clamp(this.progress, 0, 1);
+    var elapsedSeconds = progress * this.duration / 1000;
+    var durationSeconds = this.duration / 1000;
+    var elapsedText = elapsedSeconds.toFixed(1) + " s";
+    var durationText = durationSeconds.toFixed(1) + " s";
     this.article.style.setProperty("--progress", progress.toFixed(4));
     this.article.style.setProperty("--progress-percent", (progress * 100).toFixed(2) + "%");
     if (this.stage) {
@@ -494,22 +656,21 @@
       this.stage.style.setProperty("--progress-percent", (progress * 100).toFixed(2) + "%");
     }
     this.article.dataset.progress = String(Math.round(progress * 100));
+    this.article.dataset.motionTime = elapsedSeconds.toFixed(1);
     this.article.dataset.reducedMotion = reducedMotion.matches ? "true" : "false";
 
     if (this.timeline) {
-      this.timeline.setAttribute("aria-valuetext", Math.round(progress * 100) + "% through the explanation");
+      this.timeline.setAttribute("aria-valuetext", "Motion time " + elapsedText + " of " + durationText);
     }
+    if (this.elapsedOutput) this.elapsedOutput.textContent = elapsedText;
+    if (this.durationOutput) this.durationOutput.textContent = durationText;
+    // Legacy exports used data-role="phase". Keep it useful, but never return
+    // to a step counter: the scrubber always denotes the complete motion.
+    if (this.phaseOutput) this.phaseOutput.textContent = elapsedText + " / " + durationText;
 
     if (this.name === "normalization") renderNormalization(this, progress);
     else if (this.name === "transfer") renderTransfer(this, progress);
     else renderSpeed(this, progress);
-
-    var phase = phaseDefinition(this.name, progress, this.mode);
-    if (this.phaseOutput && (announce || phase.index !== this.phaseIndex)) {
-      this.phaseOutput.textContent = "Step " + (phase.index + 1) + " of " + phase.total + ": " + phase.text;
-    }
-    this.phaseIndex = phase.index;
-    this.article.dataset.phase = String(phase.index + 1);
   };
 
   function initStories() {
@@ -803,26 +964,33 @@
     }
 
     function updateVideo(video) {
-      if (mayAutoplay(video)) safePlay(video);
-      else video.pause();
+      if (mayAutoplay(video)) {
+        if (video.readyState === 0) video.load();
+        safePlay(video);
+      } else if (!video.paused) {
+        video.pause();
+      }
     }
 
     videos.forEach(function (video) {
-      video.autoplay = false;
-      video.removeAttribute("autoplay");
       video.muted = true;
       video.playsInline = true;
-      video.pause();
+      video.controls = true;
+      if (!video.getAttribute("preload") || video.getAttribute("preload") === "none") {
+        video.preload = "metadata";
+      }
       visibility.set(video, false);
+      video.addEventListener("loadeddata", function () { updateVideo(video); });
+      video.addEventListener("canplay", function () { updateVideo(video); });
     });
 
     if ("IntersectionObserver" in window) {
       var observer = new IntersectionObserver(function (entries) {
         entries.forEach(function (entry) {
-          visibility.set(entry.target, entry.isIntersecting && entry.intersectionRatio >= 0.30);
+          visibility.set(entry.target, entry.isIntersecting && entry.intersectionRatio >= 0.15);
           updateVideo(entry.target);
         });
-      }, { threshold: [0, 0.30, 0.65] });
+      }, { threshold: [0, 0.15, 0.50] });
       videos.forEach(function (video) { observer.observe(video); });
     } else {
       var scheduled = false;
@@ -832,7 +1000,7 @@
           var rectangle = video.getBoundingClientRect();
           var visibleHeight = Math.min(rectangle.bottom, window.innerHeight) - Math.max(rectangle.top, 0);
           var ratio = rectangle.height > 0 ? clamp(visibleHeight / rectangle.height, 0, 1) : 0;
-          visibility.set(video, ratio >= 0.30);
+          visibility.set(video, ratio >= 0.15);
           updateVideo(video);
         });
       };

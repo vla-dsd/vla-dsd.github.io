@@ -24,6 +24,7 @@ html {
 
 body {
   margin: 0;
+  overflow-x: clip;
   color: var(--ink);
   background: var(--paper);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
@@ -1707,6 +1708,420 @@ footer {
   text-align: center;
 }
 
+/* Raw-versus-DSD story comparisons */
+
+.problemControls {
+  grid-template-columns: auto auto minmax(0, 1fr);
+}
+
+.problemControls .motionTimeline {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(42px, auto) minmax(110px, 1fr) minmax(42px, auto);
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border: 1px solid #d5e2ea;
+  border-radius: 9px;
+  background: white;
+}
+
+.motionTimeline .timelineTitle {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.motionTimeline output {
+  min-width: 42px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  text-align: center;
+}
+
+.motionTimeline input {
+  width: 100%;
+  min-width: 80px;
+}
+
+.motionMarker rect {
+  stroke-width: 1.5;
+  filter: drop-shadow(0 2px 3px rgba(7, 26, 51, 0.12));
+}
+
+.motionMarker text {
+  fill: white;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+  text-anchor: middle;
+  text-transform: uppercase;
+}
+
+.motionMarkerSlow rect {
+  fill: var(--blue);
+  stroke: #084c88;
+}
+
+.motionMarkerFast rect {
+  fill: #c27612;
+  stroke: #955708;
+}
+
+.motionPathFast {
+  stroke: #d9a25d;
+}
+
+.stepArrow {
+  stroke-width: 2.5;
+}
+
+.stepArrowFast {
+  stroke: #c27612;
+}
+
+.representationComparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.representationPanel,
+.transferPanel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #d7e2e9;
+  border-radius: 11px;
+  background: #fbfdfe;
+}
+
+.representationPanel > header,
+.transferPanel > header {
+  min-height: 33px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid #dfe8ed;
+}
+
+.representationPanel > header span,
+.transferPanel > header span {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.035em;
+}
+
+.representationPanel > header b,
+.transferPanel > header b {
+  padding: 3px 6px;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.rawRepresentation > header b,
+.rawTransferPanel > header b {
+  color: #a7372c;
+  background: var(--red-soft);
+}
+
+.dsdRepresentation,
+.dsdTransferPanel {
+  border-color: #b9d7bf;
+  background: #fbfefb;
+}
+
+.dsdRepresentation > header,
+.dsdTransferPanel > header {
+  border-bottom-color: #d9e9dc;
+}
+
+.dsdRepresentation > header b,
+.dsdTransferPanel > header b {
+  color: var(--green);
+  background: var(--green-soft);
+}
+
+.tokenLine {
+  display: grid;
+  grid-template-columns: 35px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+}
+
+.tokenLine + .tokenLine {
+  border-top: 1px solid #edf2f5;
+}
+
+.tokenLine small {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.tokenLine code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.dsdRepresentation .tokenLine code > span:first-child {
+  color: var(--green);
+}
+
+.dsdRepresentation .tokenLine code > span:last-child {
+  color: var(--blue);
+}
+
+.statsRangeDiagram {
+  display: grid;
+  gap: 10px;
+  padding: 18px 18px 22px;
+  border: 1px solid #dce7ed;
+  border-radius: 11px;
+  background: #f9fcfd;
+}
+
+.statsRangeLabels {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.statsRangeLabels > span:last-child {
+  text-align: right;
+}
+
+.statsRangeLabels b {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.statsRangeLabels .fixedActionLabel {
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: var(--blue);
+  background: var(--blue-soft);
+  font-size: 9px;
+  text-align: center;
+}
+
+.statsAxis {
+  position: relative;
+  height: 30px;
+  margin: 0 7px;
+}
+
+.statsAxis::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  right: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: #d6e0e6;
+}
+
+.statsActiveRange {
+  position: absolute;
+  z-index: 1;
+  top: 12px;
+  right: calc(100% - var(--stats-right, 90%));
+  left: var(--stats-left, 10%);
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #78b4e4, var(--blue));
+}
+
+.statsHandle,
+.fixedActionMarker {
+  position: absolute;
+  z-index: 2;
+  top: 15px;
+  width: 12px;
+  height: 12px;
+  border: 3px solid white;
+  border-radius: 3px;
+  background: var(--blue);
+  box-shadow: 0 2px 6px rgba(7, 26, 51, 0.24);
+  transform: translate(-50%, -50%);
+}
+
+.statsHandleLower {
+  left: var(--stats-left, 10%);
+}
+
+.statsHandleUpper {
+  left: var(--stats-right, 90%);
+}
+
+.fixedActionMarker {
+  left: var(--action-position, 54.55%);
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #f1a431;
+}
+
+.statsHandle span,
+.fixedActionMarker span {
+  position: absolute;
+  top: 15px;
+  left: 50%;
+  color: var(--muted);
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  transform: translateX(-50%);
+}
+
+.metricPair {
+  min-height: 62px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+}
+
+.metricPair > span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.metricPair strong {
+  display: block;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.dsdRepresentation .metricPair strong {
+  color: var(--green);
+}
+
+.boundControls {
+  display: grid;
+  grid-template-columns: auto minmax(90px, 1fr) 62px auto minmax(90px, 1fr) 62px;
+  align-items: center;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #d5e2ea;
+  border-radius: 10px;
+  background: white;
+}
+
+.boundControls label {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.boundControls input {
+  min-width: 70px;
+  width: 100%;
+  accent-color: var(--blue);
+}
+
+.boundControls output {
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 850;
+  text-align: right;
+}
+
+.transferComparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.transferPanel svg {
+  width: 100%;
+  max-height: 206px;
+}
+
+.transferPanel > code {
+  display: block;
+  margin: 0 9px 9px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  color: #a7372c;
+  background: var(--red-soft);
+  font-size: 9px;
+  font-weight: 850;
+  text-align: center;
+}
+
+.dsdTransferPanel > code {
+  color: var(--green);
+  background: var(--green-soft);
+}
+
+.transferStage svg {
+  max-height: 206px;
+}
+
+.vector {
+  stroke-width: 4;
+}
+
+.sourceVectorGhost {
+  opacity: 0.22;
+}
+
+.transferChain {
+  margin-top: 11px;
+}
+
+.transferInputControl output {
+  min-width: 164px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+}
+
 .normalizationRule {
   display: grid;
   grid-template-columns: 190px 1fr;
@@ -2143,7 +2558,8 @@ footer {
   }
 
   .transferChain i {
-    transform: rotate(90deg);
+    padding: 2px 0;
+    transform: none;
   }
 
   .normalizationRule,
@@ -2199,5 +2615,78 @@ footer {
 
   .activeScore {
     text-align: left;
+  }
+}
+
+@media (max-width: 720px) {
+  .speedStage .svgLaneLabel {
+    font-size: 22px;
+  }
+
+  .speedStage .svgSmall {
+    font-size: 18px;
+  }
+
+  .speedStage .motionMarker text {
+    font-size: 13px;
+  }
+
+  .speedStage .motionPath {
+    stroke-width: 7;
+  }
+
+  .speedStage .stepArrow {
+    stroke-width: 4;
+  }
+
+  .representationComparison,
+  .transferComparison {
+    grid-template-columns: 1fr;
+  }
+
+  .statsRangeLabels {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .statsRangeLabels .fixedActionLabel {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    justify-self: center;
+  }
+
+  .boundControls {
+    grid-template-columns: auto minmax(80px, 1fr) 62px;
+  }
+
+  .problemControls .motionTimeline {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .problemControls .motionTimeline output {
+    grid-column: auto;
+    grid-row: auto;
+    min-height: 0;
+    text-align: center;
+  }
+
+  .transferPanel svg,
+  .transferStage svg {
+    max-height: 235px;
+  }
+
+  .transferInputControl output {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 460px) {
+  .motionTimeline .timelineTitle {
+    grid-column: 1 / -1;
+  }
+
+  .problemControls .motionTimeline {
+    grid-template-columns: minmax(40px, auto) minmax(90px, 1fr) minmax(40px, auto);
   }
 }

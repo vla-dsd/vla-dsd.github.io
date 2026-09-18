@@ -1,6 +1,6 @@
 # Direction-Scale Decomposition
 
-Anonymous static project page for double-blind review.
+Static project page for review.
 
 ## Preview locally
 
@@ -15,7 +15,7 @@ Then open <http://localhost:8000>.
 - `index.html` contains the page structure and text.
 - `styles.css` contains the layout and responsive design.
 - `interactions.js` powers the problem animations and rollout browser.
-- `paper.pdf` is the anonymous manuscript linked from the page.
+- `paper.pdf` is the manuscript linked from the page.
 - `media/` contains the overview and experiment videos plus poster images.
 
 Keep author names, affiliations, personal URLs, and identifying metadata out of this review repository.
