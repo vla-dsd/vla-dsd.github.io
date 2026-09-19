@@ -3,6 +3,12 @@
 
   var STORY_DURATION_MS = 7000;
   var activeStory = null;
+  var NORMALIZATION_AXIS_ORDER = ["x", "y", "z"];
+  var NORMALIZATION_AXIS_DEFAULTS = {
+    x: { action: 4, startLower: -4, startUpper: 9.9, targetLower: -0.5, targetUpper: 4.29, direction: 0.62, token: 207 },
+    y: { action: 4, startLower: -5, startUpper: 11.2, targetLower: -0.2, targetUpper: 4.15, direction: 0.62, token: 207 },
+    z: { action: 3, startLower: -3, startUpper: 10.6, targetLower: -1, targetUpper: 4, direction: 0.47, token: 187 }
+  };
 
   var reducedMotion = window.matchMedia
     ? window.matchMedia("(prefers-reduced-motion: reduce)")
@@ -218,23 +224,37 @@
     var article = controller.article;
     var motionProgress = smoothstep(progress);
     var speedFactor = controller.speedFactor || 1.6;
-    var fastProgress = clamp(motionProgress * speedFactor, 0, 1);
-    // The geometric path is straight, so its direction-token triplet is
-    // constant at every sample and at both collection speeds.
-    var directionTokens = [222, 151, 132];
-    var slowMagnitude = 0.42;
-    var fastMagnitude = slowMagnitude * speedFactor;
-    var slowRawTokens = directionTokens.map(function (value) {
-      return 128 + (value - 128) * slowMagnitude;
+    var effectiveFastSpeed = Math.max(1.05, speedFactor);
+    var slowProgress = motionProgress;
+    var fastProgress = clamp(motionProgress * effectiveFastSpeed, 0, 1);
+    // The geometric path is straight, so this direction-token triplet remains
+    // identical at every sample and at both collection speeds.
+    // These three illustrative bins decode to an approximately unit-length
+    // 3-D direction: (0.74, 0.18, 0.65).
+    var directionTokens = [222, 151, 211];
+    var direction = directionTokens.map(function (token) {
+      return (token - 128) / 127;
     });
-    var fastRawTokens = directionTokens.map(function (value) {
-      return 128 + (value - 128) * fastMagnitude;
+
+    function magnitudeAt(laneProgress, peakMagnitude) {
+      // Smooth accelerate/decelerate profile with a small non-zero floor so
+      // that the current action remains visible at both endpoints.
+      return peakMagnitude * (0.18 + 0.82 * Math.sin(Math.PI * clamp(laneProgress, 0, 1)));
+    }
+
+    var slowMagnitude = magnitudeAt(slowProgress, 0.28);
+    var fastMagnitude = magnitudeAt(fastProgress, 0.28 * effectiveFastSpeed);
+    var slowRawTokens = direction.map(function (component) {
+      return 128 + component * slowMagnitude * 195;
     });
-    var slowScaleToken = Math.round(128 + 46 * slowMagnitude);
-    var fastScaleToken = Math.round(128 + 46 * fastMagnitude);
+    var fastRawTokens = direction.map(function (component) {
+      return 128 + component * fastMagnitude * 195;
+    });
+    var slowScaleToken = Math.round(clamp(slowMagnitude / 0.55, 0, 1) * 255);
+    var fastScaleToken = Math.round(clamp(fastMagnitude / 0.55, 0, 1) * 255);
 
     article.style.setProperty("--motion-progress", motionProgress.toFixed(4));
-    article.style.setProperty("--slow-progress", motionProgress.toFixed(4));
+    article.style.setProperty("--slow-progress", slowProgress.toFixed(4));
     article.style.setProperty("--fast-progress", fastProgress.toFixed(4));
     article.style.setProperty("--speed-factor", speedFactor.toFixed(2));
     article.style.setProperty("--slow-step-scale", slowMagnitude.toFixed(3));
@@ -244,77 +264,122 @@
     var fastMarker = article.querySelector('[data-role="speed-fast-marker"]');
     var slowPath = article.querySelector('[data-role="slow-path"]');
     var fastPath = article.querySelector('[data-role="fast-path"]') || slowPath;
-    positionOnPath(slowMarker, slowPath, motionProgress);
+    positionOnPath(slowMarker, slowPath, slowProgress);
     positionOnPath(fastMarker, fastPath, fastProgress);
 
     // These values never disappear: the current action token is visible for
     // every sample of the motion, including the initial frame.
     setRoleText(article, ["speed-raw-slow-token", "speed-slow-token", "slow-token"], formatTokens(slowRawTokens));
     setRoleText(article, ["speed-raw-fast-token", "speed-fast-token", "fast-token"], formatTokens(fastRawTokens));
-    setRoleText(article, ["speed-dsd-direction-slow"], formatTokens(directionTokens));
-    setRoleText(article, ["speed-dsd-direction-fast"], formatTokens(directionTokens));
+    setRoleText(article, ["speed-dsd-direction-slow", "speed-dsd-direction-fast"], formatTokens(directionTokens));
     setRoleText(article, ["speed-dsd-scale-slow"], "scale #" + slowScaleToken);
     setRoleText(article, ["speed-dsd-scale-fast"], "scale #" + fastScaleToken);
-    setRoleText(article, ["speed-slow-progress"], Math.round(motionProgress * 100) + "%");
+    setRoleText(article, ["speed-slow-progress"], Math.round(slowProgress * 100) + "%");
     setRoleText(article, ["speed-fast-progress"], Math.round(fastProgress * 100) + "%");
     setRoleText(article, ["speed-fast-value", "speed-factor-value"], speedFactor.toFixed(1) + "\u00d7");
     article.dataset.directionTokenState = "constant";
+    article.dataset.slowMagnitude = slowMagnitude.toFixed(4);
+    article.dataset.fastMagnitude = fastMagnitude.toFixed(4);
+  }
+
+  function updateNormalizationAxisButtons(controller) {
+    var selectedAxis = controller.normalizationAxis || "x";
+    controller.normalizationAxisButtons.forEach(function (button) {
+      var selected = button.dataset.normalizationAxis === selectedAxis;
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
+      button.removeAttribute("aria-selected");
+      button.tabIndex = selected ? 0 : -1;
+      button.dataset.active = selected ? "true" : "false";
+    });
   }
 
   function renderNormalization(controller, progress) {
     var article = controller.article;
     var mix = smoothstep(progress);
-    var actionValue = 4;
-    var lowerTarget = controller.statsLowerTarget;
-    var upperTarget = controller.statsUpperTarget;
-
-    // Animate the two endpoints independently. The physical action stays at
-    // 4 mm; only the statistics interval changes around it.
-    var lower = controller.statsManual ? lowerTarget : lerp(controller.statsLowerStart, lowerTarget, mix);
-    var upper = controller.statsManual ? upperTarget : lerp(controller.statsUpperStart, upperTarget, mix);
-    if (upper <= lower + 0.10) upper = lower + 0.10;
-    var normalizedValue = clamp(2 * (actionValue - lower) / (upper - lower) - 1, -1, 1);
-    var bin = clamp(Math.floor(((normalizedValue + 1) / 2) * 256), 0, 255);
-    var position = ((normalizedValue + 1) / 2) * 100;
     var domainMinimum = -8;
     var domainMaximum = 14;
-    var leftPosition = clamp((lower - domainMinimum) / (domainMaximum - domainMinimum) * 100, 0, 100);
-    var rightPosition = clamp((upper - domainMinimum) / (domainMaximum - domainMinimum) * 100, 0, 100);
-    var actionPosition = clamp((actionValue - domainMinimum) / (domainMaximum - domainMinimum) * 100, 0, 100);
+    var states = {};
 
+    NORMALIZATION_AXIS_ORDER.forEach(function (axis) {
+      var defaults = NORMALIZATION_AXIS_DEFAULTS[axis];
+      var targets = controller.normalizationBounds[axis];
+      var lower = lerp(defaults.startLower, targets.lower, mix);
+      var upper = lerp(defaults.startUpper, targets.upper, mix);
+      if (upper <= lower + 0.10) upper = lower + 0.10;
+
+      var normalizedValue = clamp(2 * (defaults.action - lower) / (upper - lower) - 1, -1, 1);
+      var bin = clamp(Math.floor(((normalizedValue + 1) / 2) * 256), 0, 255);
+      var leftPosition = clamp((lower - domainMinimum) / (domainMaximum - domainMinimum) * 100, 0, 100);
+      var rightPosition = clamp((upper - domainMinimum) / (domainMaximum - domainMinimum) * 100, 0, 100);
+      var actionPosition = clamp((defaults.action - domainMinimum) / (domainMaximum - domainMinimum) * 100, 0, 100);
+      var row = article.querySelector('[data-axis-bound="' + axis + '"]');
+
+      states[axis] = {
+        lower: lower,
+        upper: upper,
+        normalizedValue: normalizedValue,
+        bin: bin,
+        leftPosition: leftPosition,
+        rightPosition: rightPosition,
+        actionPosition: actionPosition
+      };
+
+      if (row) {
+        row.style.setProperty("--axis-left", leftPosition.toFixed(2) + "%");
+        row.style.setProperty("--axis-right", rightPosition.toFixed(2) + "%");
+        row.style.setProperty("--axis-action", actionPosition.toFixed(2) + "%");
+        row.dataset.normalizedValue = normalizedValue.toFixed(2);
+        row.dataset.bin = String(bin);
+      }
+
+      setRoleText(article, ["normalization-" + axis + "-lower-value"], formatSigned(lower, 1) + " mm");
+      setRoleText(article, ["normalization-" + axis + "-upper-value"], formatSigned(upper, 1) + " mm");
+      setRoleText(article, ["normalization-" + axis + "-value"], normalizedValue.toFixed(2));
+      setRoleText(article, ["normalization-" + axis + "-bin"], "#" + bin);
+      setRoleText(article, ["normalization-dsd-direction-" + axis], defaults.direction.toFixed(2));
+      setRoleText(article, ["normalization-dsd-token-" + axis], "token #" + defaults.token);
+    });
+
+    var selectedAxis = controller.normalizationAxis || "x";
+    var selected = states[selectedAxis];
     article.style.setProperty("--motion-progress", mix.toFixed(4));
     article.style.setProperty("--stats-mix", mix.toFixed(4));
-    article.style.setProperty("--stats-left", leftPosition.toFixed(2) + "%");
-    article.style.setProperty("--stats-right", rightPosition.toFixed(2) + "%");
-    article.style.setProperty("--stats-lower-position", leftPosition.toFixed(2) + "%");
-    article.style.setProperty("--stats-upper-position", rightPosition.toFixed(2) + "%");
-    article.style.setProperty("--stats-width", Math.max(0, rightPosition - leftPosition).toFixed(2) + "%");
-    article.style.setProperty("--action-position", actionPosition.toFixed(2) + "%");
-    article.style.setProperty("--normalized-value", normalizedValue.toFixed(4));
-    article.style.setProperty("--normalization-position", position.toFixed(2) + "%");
-    article.style.setProperty("--norm-position", position.toFixed(2) + "%");
-    article.style.setProperty("--bin-index", String(bin));
+    article.style.setProperty("--stats-left", selected.leftPosition.toFixed(2) + "%");
+    article.style.setProperty("--stats-right", selected.rightPosition.toFixed(2) + "%");
+    article.style.setProperty("--stats-lower-position", selected.leftPosition.toFixed(2) + "%");
+    article.style.setProperty("--stats-upper-position", selected.rightPosition.toFixed(2) + "%");
+    article.style.setProperty("--stats-width", Math.max(0, selected.rightPosition - selected.leftPosition).toFixed(2) + "%");
+    article.style.setProperty("--action-position", selected.actionPosition.toFixed(2) + "%");
+    article.style.setProperty("--normalized-value", selected.normalizedValue.toFixed(4));
+    article.style.setProperty("--normalization-position", (((selected.normalizedValue + 1) / 2) * 100).toFixed(2) + "%");
+    article.style.setProperty("--norm-position", (((selected.normalizedValue + 1) / 2) * 100).toFixed(2) + "%");
+    article.style.setProperty("--bin-index", String(selected.bin));
+    article.dataset.normalizationAxis = selectedAxis;
 
-    setRoleText(article, ["normalization-value", "normalized-value", "norm-value", "stats-value"], normalizedValue.toFixed(2));
-    setRoleText(article, ["normalization-bin", "norm-bin", "stats-bin"], String(bin));
-    setRoleText(article, ["normalization-bin-label", "norm-bin-label"], "bin " + bin);
-    setRoleText(article, ["normalization-lower-value"], formatSigned(lower, 1) + " mm");
-    setRoleText(article, ["normalization-upper-value"], formatSigned(upper, 1) + " mm");
-    setRoleText(article, ["normalization-raw-token"], "bin " + bin);
+    // Legacy single-axis roles follow the selected axis.
+    setRoleText(article, ["normalization-value", "normalized-value", "norm-value", "stats-value"], selected.normalizedValue.toFixed(2));
+    setRoleText(article, ["normalization-bin", "norm-bin", "stats-bin"], String(selected.bin));
+    setRoleText(article, ["normalization-bin-label", "norm-bin-label"], "bin " + selected.bin);
+    setRoleText(article, ["normalization-lower-value"], formatSigned(selected.lower, 1) + " mm");
+    setRoleText(article, ["normalization-upper-value"], formatSigned(selected.upper, 1) + " mm");
+    setRoleText(article, ["normalization-raw-token"], "bin " + selected.bin);
     setRoleText(article, ["normalization-dsd-direction"], "(0.62, 0.62, 0.47)");
     setRoleText(article, ["normalization-dsd-token"], "dir #207 \u00b7 #207 \u00b7 #187");
     setRoleText(article, ["normalization-dsd-scale-token"], "may differ");
 
-    if (!controller.statsPointerActive && !controller.statsManual) {
-      setBoundInput(controller.statsLowerInput, lower);
-      setBoundInput(controller.statsUpperInput, upper);
+    if (!controller.statsPointerActive) {
+      setBoundInput(controller.statsLowerInput, selected.lower);
+      setBoundInput(controller.statsUpperInput, selected.upper);
     }
+    setRoleText(article, ["normalization-control-lower-value"], formatSigned(selected.lower, 1) + " mm");
+    setRoleText(article, ["normalization-control-upper-value"], formatSigned(selected.upper, 1) + " mm");
     if (controller.statsLowerInput) {
-      controller.statsLowerInput.setAttribute("aria-valuetext", "Lower statistics bound " + lower.toFixed(1) + " millimeters");
+      controller.statsLowerInput.setAttribute("aria-valuetext", selectedAxis.toUpperCase() + "-axis lower bound " + selected.lower.toFixed(1) + " millimeters");
     }
     if (controller.statsUpperInput) {
-      controller.statsUpperInput.setAttribute("aria-valuetext", "Upper statistics bound " + upper.toFixed(1) + " millimeters");
+      controller.statsUpperInput.setAttribute("aria-valuetext", selectedAxis.toUpperCase() + "-axis upper bound " + selected.upper.toFixed(1) + " millimeters");
     }
+    updateNormalizationAxisButtons(controller);
   }
 
   function renderTransfer(controller, progress) {
@@ -395,6 +460,7 @@
     this.durationOutput = article.querySelector('[data-role="duration"]');
     this.statsLowerInput = article.querySelector('input[data-role="normalization-lower"], input[data-role="stats-left"]');
     this.statsUpperInput = article.querySelector('input[data-role="normalization-upper"], input[data-role="stats-right"]');
+    this.normalizationAxisButtons = Array.prototype.slice.call(article.querySelectorAll('button[data-normalization-axis="x"], button[data-normalization-axis="y"], button[data-normalization-axis="z"]'));
     this.speedInput = article.querySelector('input[data-role="speed-factor"]');
     this.transferInput = article.querySelector('input[data-role="transfer-input"]');
     this.modeButtons = Array.prototype.slice.call(article.querySelectorAll('button[data-mode="raw"], button[data-mode="dsd"]'));
@@ -409,10 +475,18 @@
     this.statsManual = false;
     this.mode = "raw";
     this.speedFactor = this.speedInput ? Number(this.speedInput.value || 160) / 100 : 1.6;
-    this.statsLowerStart = readBound(this.statsLowerInput, -4.00);
-    this.statsUpperStart = readBound(this.statsUpperInput, 9.90);
-    this.statsLowerTarget = -0.50;
-    this.statsUpperTarget = 4.29;
+    var selectedAxisButton = this.normalizationAxisButtons.find(function (button) {
+      return button.getAttribute("aria-pressed") === "true" || button.getAttribute("aria-selected") === "true" || button.dataset.active === "true";
+    });
+    this.normalizationAxis = selectedAxisButton ? selectedAxisButton.dataset.normalizationAxis : "x";
+    this.normalizationBounds = {};
+    NORMALIZATION_AXIS_ORDER.forEach(function (axis) {
+      var defaults = NORMALIZATION_AXIS_DEFAULTS[axis];
+      this.normalizationBounds[axis] = {
+        lower: defaults.targetLower,
+        upper: defaults.targetUpper
+      };
+    }, this);
 
     if (this.name === "transfer") {
       this.progress = 1;
@@ -501,24 +575,47 @@
     }
 
     if (this.name === "normalization") {
+      this.normalizationAxisButtons.forEach(function (button, index) {
+        button.addEventListener("click", function () {
+          var axis = button.dataset.normalizationAxis;
+          if (!NORMALIZATION_AXIS_DEFAULTS[axis]) return;
+          controller.pause("axis-selection");
+          controller.normalizationAxis = axis;
+          updateNormalizationAxisButtons(controller);
+          controller.render(true);
+        });
+        button.addEventListener("keydown", function (event) {
+          var nextIndex = null;
+          if (event.key === "ArrowRight" || event.key === "ArrowDown") nextIndex = (index + 1) % controller.normalizationAxisButtons.length;
+          if (event.key === "ArrowLeft" || event.key === "ArrowUp") nextIndex = (index - 1 + controller.normalizationAxisButtons.length) % controller.normalizationAxisButtons.length;
+          if (event.key === "Home") nextIndex = 0;
+          if (event.key === "End") nextIndex = controller.normalizationAxisButtons.length - 1;
+          if (nextIndex !== null && controller.normalizationAxisButtons[nextIndex]) {
+            event.preventDefault();
+            controller.normalizationAxisButtons[nextIndex].focus();
+            controller.normalizationAxisButtons[nextIndex].click();
+          }
+        });
+      });
+
       [this.statsLowerInput, this.statsUpperInput].filter(Boolean).forEach(function (input) {
         input.addEventListener("pointerdown", function () {
           controller.statsPointerActive = true;
-          controller.statsManual = true;
           controller.pause("bound-adjustment");
         });
         input.addEventListener("input", function () {
           controller.pause("bound-adjustment");
           controller.statsPointerActive = true;
-          controller.statsManual = true;
-          var lower = readBound(controller.statsLowerInput, controller.statsLowerTarget);
-          var upper = readBound(controller.statsUpperInput, controller.statsUpperTarget);
+          var axis = controller.normalizationAxis || "x";
+          var bounds = controller.normalizationBounds[axis];
+          var lower = readBound(controller.statsLowerInput, bounds.lower);
+          var upper = readBound(controller.statsUpperInput, bounds.upper);
           if (upper <= lower + 0.10) {
             if (input === controller.statsLowerInput) lower = upper - 0.10;
             else upper = lower + 0.10;
           }
-          controller.statsLowerTarget = lower;
-          controller.statsUpperTarget = upper;
+          bounds.lower = lower;
+          bounds.upper = upper;
           controller.setProgress(1, true);
         });
         ["pointerup", "pointercancel", "change", "blur"].forEach(function (eventName) {
@@ -605,8 +702,11 @@
     this.pause("reset");
     if (this.name === "normalization") {
       this.statsManual = false;
-      this.statsLowerTarget = -0.50;
-      this.statsUpperTarget = 4.29;
+      NORMALIZATION_AXIS_ORDER.forEach(function (axis) {
+        var defaults = NORMALIZATION_AXIS_DEFAULTS[axis];
+        this.normalizationBounds[axis].lower = defaults.targetLower;
+        this.normalizationBounds[axis].upper = defaults.targetUpper;
+      }, this);
     }
     // The canonical paper example is the full (100%) transfer input. Other
     // stories reset to the beginning of their seven-second motion.
