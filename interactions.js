@@ -143,12 +143,6 @@
     input.value = String(maximum > 15 ? Math.round(value * 10) : value);
   }
 
-  function readTransferScale(input) {
-    var value = readNumeric(input, 100);
-    var maximum = input ? Number(input.max || 100) : 100;
-    return clamp(maximum > 4 ? value / 100 : value, 0.20, 2.50);
-  }
-
   function formatUnitlessVector(values) {
     return "(" + values.map(function (value) {
       return formatSigned(value, 3);
@@ -159,12 +153,6 @@
     return Math.sqrt(vector.reduce(function (sum, value) {
       return sum + value * value;
     }, 0));
-  }
-
-  function mixVector(start, end, amount) {
-    return start.map(function (value, index) {
-      return lerp(value, end[index], amount);
-    });
   }
 
   function scaleVector(vector, scale) {
@@ -231,22 +219,15 @@
     var motionProgress = smoothstep(progress);
     var speedFactor = controller.speedFactor || 1.6;
     var fastProgress = clamp(motionProgress * speedFactor, 0, 1);
-    var directionSequence = [
-      [222, 151, 132], [219, 157, 132], [216, 163, 131],
-      [211, 170, 131], [205, 177, 130], [198, 184, 129],
-      [191, 190, 128], [184, 197, 127], [176, 204, 126],
-      [168, 211, 125], [160, 217, 124], [153, 222, 123]
-    ];
-    var slowTokenIndex = Math.min(directionSequence.length - 1, Math.floor(motionProgress * directionSequence.length));
-    var fastTokenIndex = Math.min(directionSequence.length - 1, Math.floor(fastProgress * directionSequence.length));
-    var slowDirectionTokens = directionSequence[slowTokenIndex];
-    var fastDirectionTokens = directionSequence[fastTokenIndex];
+    // The geometric path is straight, so its direction-token triplet is
+    // constant at every sample and at both collection speeds.
+    var directionTokens = [222, 151, 132];
     var slowMagnitude = 0.42;
     var fastMagnitude = slowMagnitude * speedFactor;
-    var slowRawTokens = slowDirectionTokens.map(function (value) {
+    var slowRawTokens = directionTokens.map(function (value) {
       return 128 + (value - 128) * slowMagnitude;
     });
-    var fastRawTokens = fastDirectionTokens.map(function (value) {
+    var fastRawTokens = directionTokens.map(function (value) {
       return 128 + (value - 128) * fastMagnitude;
     });
     var slowScaleToken = Math.round(128 + 46 * slowMagnitude);
@@ -270,15 +251,14 @@
     // every sample of the motion, including the initial frame.
     setRoleText(article, ["speed-raw-slow-token", "speed-slow-token", "slow-token"], formatTokens(slowRawTokens));
     setRoleText(article, ["speed-raw-fast-token", "speed-fast-token", "fast-token"], formatTokens(fastRawTokens));
-    setRoleText(article, ["speed-dsd-direction-slow"], formatTokens(slowDirectionTokens));
-    setRoleText(article, ["speed-dsd-direction-fast"], formatTokens(fastDirectionTokens));
+    setRoleText(article, ["speed-dsd-direction-slow"], formatTokens(directionTokens));
+    setRoleText(article, ["speed-dsd-direction-fast"], formatTokens(directionTokens));
     setRoleText(article, ["speed-dsd-scale-slow"], "scale #" + slowScaleToken);
     setRoleText(article, ["speed-dsd-scale-fast"], "scale #" + fastScaleToken);
     setRoleText(article, ["speed-slow-progress"], Math.round(motionProgress * 100) + "%");
     setRoleText(article, ["speed-fast-progress"], Math.round(fastProgress * 100) + "%");
     setRoleText(article, ["speed-fast-value", "speed-factor-value"], speedFactor.toFixed(1) + "\u00d7");
-    article.dataset.slowTokenIndex = String(slowTokenIndex + 1);
-    article.dataset.fastTokenIndex = String(fastTokenIndex + 1);
+    article.dataset.directionTokenState = "constant";
   }
 
   function renderNormalization(controller, progress) {
@@ -323,6 +303,7 @@
     setRoleText(article, ["normalization-raw-token"], "bin " + bin);
     setRoleText(article, ["normalization-dsd-direction"], "(0.62, 0.62, 0.47)");
     setRoleText(article, ["normalization-dsd-token"], "dir #207 \u00b7 #207 \u00b7 #187");
+    setRoleText(article, ["normalization-dsd-scale-token"], "may differ");
 
     if (!controller.statsPointerActive && !controller.statsManual) {
       setBoundInput(controller.statsLowerInput, lower);
@@ -338,8 +319,7 @@
 
   function renderTransfer(controller, progress) {
     var article = controller.article;
-    var change = smoothstep(progress);
-    var inputScale = controller.transferInputScale;
+    var inputScale = lerp(0.20, 1.00, progress);
     var baseSource = [2.90, -4.60, 3.40];
     var source = scaleVector(baseSource, inputScale);
     var rawTarget = [
@@ -347,9 +327,8 @@
       0.55 * source[1] + 0.510,
       -0.45 * source[2] - 0.660
     ];
-    var dsdTarget = scaleVector(source, 0.82 + 0.10 * inputScale);
-    var rawOutput = mixVector(source, rawTarget, change);
-    var dsdOutput = mixVector(source, dsdTarget, change);
+    var rawOutput = rawTarget;
+    var dsdOutput = scaleVector(source, 0.92);
     var rawAngle = vectorAngle(source, rawOutput);
     var fullRawAngle = vectorAngle(source, rawTarget);
     if (Math.abs(inputScale - 1) < 0.0001 && fullRawAngle > 1e-8) {
@@ -358,15 +337,15 @@
     }
 
     article.dataset.mode = "comparison";
-    article.style.setProperty("--transfer-mix", change.toFixed(4));
-    article.style.setProperty("--motion-progress", change.toFixed(4));
+    article.style.setProperty("--transfer-mix", "1");
+    article.style.setProperty("--motion-progress", progress.toFixed(4));
     article.style.setProperty("--transfer-angle", rawAngle.toFixed(2) + "deg");
     article.style.setProperty("--transfer-angle-value", rawAngle.toFixed(4));
     article.style.setProperty("--transfer-x", rawOutput[0].toFixed(4));
     article.style.setProperty("--transfer-y", rawOutput[1].toFixed(4));
     article.style.setProperty("--transfer-z", rawOutput[2].toFixed(4));
-    article.style.setProperty("--target-opacity", (0.20 + 0.80 * change).toFixed(4));
-    article.style.setProperty("--dsd-opacity", (0.20 + 0.80 * change).toFixed(4));
+    article.style.setProperty("--target-opacity", "1");
+    article.style.setProperty("--dsd-opacity", "1");
 
     setRoleText(article, ["transfer-angle", "transfer-raw-angle", "angle-readout"], rawAngle.toFixed(2) + "\u00b0");
     setRoleText(article, ["transfer-summary-label"], "Raw vs DSD");
@@ -398,9 +377,7 @@
     setRoleText(article, ["transfer-output-label"], "Raw: target-stat denormalization");
     setRoleText(article, ["transfer-dsd-label"], "DSD: direction preserved");
 
-    if (controller.transferInput) {
-      controller.transferInput.setAttribute("aria-valuetext", Math.round(inputScale * 100) + "% of the example input action");
-    }
+    article.dataset.inputPercent = String(Math.round(inputScale * 100));
     article.dataset.rawAngle = fullRawAngle.toFixed(2);
   }
 
@@ -412,6 +389,7 @@
     this.playButton = article.querySelector('[data-action="play"]');
     this.resetButton = article.querySelector('[data-action="reset"]');
     this.timeline = article.querySelector('input[data-role="timeline"]');
+    this.timelineTitle = article.querySelector(".timelineTitle");
     this.phaseOutput = article.querySelector('output[data-role="phase"], [data-role="phase"]');
     this.elapsedOutput = article.querySelector('[data-role="elapsed"]');
     this.durationOutput = article.querySelector('[data-role="duration"]');
@@ -435,7 +413,27 @@
     this.statsUpperStart = readBound(this.statsUpperInput, 9.90);
     this.statsLowerTarget = -0.50;
     this.statsUpperTarget = 4.29;
-    this.transferInputScale = readTransferScale(this.transferInput);
+
+    if (this.name === "transfer") {
+      this.progress = 1;
+      setRangeFraction(this.timeline, 1);
+      if (this.timelineTitle) this.timelineTitle.textContent = "Input action value";
+      if (this.timeline) this.timeline.setAttribute("aria-label", "Input action value from 20 to 100 percent");
+
+      // The shared story scrubber now owns this parameter. Suppress the old
+      // standalone slider in static exports that still contain it.
+      if (this.transferInput) {
+        var oldTransferControl = this.transferInput.closest(".transferInputControl, .parameterControl");
+        this.transferInput.disabled = true;
+        this.transferInput.hidden = true;
+        this.transferInput.style.display = "none";
+        this.transferInput.setAttribute("aria-hidden", "true");
+        if (oldTransferControl) {
+          oldTransferControl.hidden = true;
+          oldTransferControl.style.display = "none";
+        }
+      }
+    }
 
     // Old sample/playhead circles were read as unexplained red dots. New
     // markup uses compact token markers; suppress the legacy dots if a stale
@@ -541,14 +539,6 @@
       this.speedInput.setAttribute("aria-valuetext", this.speedFactor.toFixed(1) + " times speed");
     }
 
-    if (this.transferInput && this.name === "transfer") {
-      this.transferInput.addEventListener("input", function () {
-        controller.pause("input-adjustment");
-        controller.transferInputScale = readTransferScale(controller.transferInput);
-        controller.setProgress(1, true);
-      });
-    }
-
     this.modeButtons.forEach(function (button, index) {
       button.addEventListener("click", function () {
         controller.mode = button.dataset.mode === "dsd" ? "dsd" : "raw";
@@ -618,7 +608,9 @@
       this.statsLowerTarget = -0.50;
       this.statsUpperTarget = 4.29;
     }
-    this.setProgress(0, true);
+    // The canonical paper example is the full (100%) transfer input. Other
+    // stories reset to the beginning of their seven-second motion.
+    this.setProgress(this.name === "transfer" ? 1 : 0, true);
   };
 
   StoryController.prototype.tick = function (timestamp) {
@@ -647,6 +639,7 @@
     var durationSeconds = this.duration / 1000;
     var elapsedText = elapsedSeconds.toFixed(1) + " s";
     var durationText = durationSeconds.toFixed(1) + " s";
+    var transferPercent = Math.round(lerp(20, 100, progress));
     this.article.style.setProperty("--progress", progress.toFixed(4));
     this.article.style.setProperty("--progress-percent", (progress * 100).toFixed(2) + "%");
     if (this.stage) {
@@ -656,17 +649,31 @@
       this.stage.style.setProperty("--progress-percent", (progress * 100).toFixed(2) + "%");
     }
     this.article.dataset.progress = String(Math.round(progress * 100));
-    this.article.dataset.motionTime = elapsedSeconds.toFixed(1);
     this.article.dataset.reducedMotion = reducedMotion.matches ? "true" : "false";
 
-    if (this.timeline) {
-      this.timeline.setAttribute("aria-valuetext", "Motion time " + elapsedText + " of " + durationText);
+    if (this.name === "transfer") {
+      var inputText = transferPercent + "%";
+      delete this.article.dataset.motionTime;
+      this.article.dataset.inputPercent = String(transferPercent);
+      if (this.timelineTitle) this.timelineTitle.textContent = "Input action value";
+      if (this.timeline) {
+        this.timeline.setAttribute("aria-label", "Input action value from 20 to 100 percent");
+        this.timeline.setAttribute("aria-valuetext", "Input action value " + inputText);
+      }
+      if (this.elapsedOutput) this.elapsedOutput.textContent = inputText;
+      if (this.durationOutput) this.durationOutput.textContent = "100%";
+      if (this.phaseOutput) this.phaseOutput.textContent = inputText + " / 100%";
+    } else {
+      this.article.dataset.motionTime = elapsedSeconds.toFixed(1);
+      if (this.timeline) {
+        this.timeline.setAttribute("aria-valuetext", "Motion time " + elapsedText + " of " + durationText);
+      }
+      if (this.elapsedOutput) this.elapsedOutput.textContent = elapsedText;
+      if (this.durationOutput) this.durationOutput.textContent = durationText;
+      // Legacy exports used data-role="phase". Keep it useful, but never
+      // return to a step counter: this scrubber denotes the complete motion.
+      if (this.phaseOutput) this.phaseOutput.textContent = elapsedText + " / " + durationText;
     }
-    if (this.elapsedOutput) this.elapsedOutput.textContent = elapsedText;
-    if (this.durationOutput) this.durationOutput.textContent = durationText;
-    // Legacy exports used data-role="phase". Keep it useful, but never return
-    // to a step counter: the scrubber always denotes the complete motion.
-    if (this.phaseOutput) this.phaseOutput.textContent = elapsedText + " / " + durationText;
 
     if (this.name === "normalization") renderNormalization(this, progress);
     else if (this.name === "transfer") renderTransfer(this, progress);
