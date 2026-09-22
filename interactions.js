@@ -9,6 +9,10 @@
     y: { action: 4, startLower: -5, startUpper: 11.2, targetLower: -0.2, targetUpper: 4.15, direction: 0.62, token: 207 },
     z: { action: 3, startLower: -3, startUpper: 10.6, targetLower: -1, targetUpper: 4, direction: 0.47, token: 187 }
   };
+  var TRANSFER_SOURCE_ACTION = [2.90, -4.60, 3.40];
+  var TRANSFER_ENCODED_ACTION = [0.109, -0.101, -0.110];
+  var TRANSFER_BERKELEY_OUTPUT = [2.18, -2.02, -2.19];
+  var TRANSFER_BERKELEY_ANGLE = 69.84;
 
   var reducedMotion = window.matchMedia
     ? window.matchMedia("(prefers-reduced-motion: reduce)")
@@ -365,7 +369,16 @@
     setRoleText(article, ["normalization-raw-token"], "bin " + selected.bin);
     setRoleText(article, ["normalization-dsd-direction"], "(0.62, 0.62, 0.47)");
     setRoleText(article, ["normalization-dsd-token"], "dir #207 \u00b7 #207 \u00b7 #187");
-    setRoleText(article, ["normalization-dsd-scale-token"], "may differ");
+    // Demonstration-only magnitude bin: ||(4, 4, 3)|| = 6.40 mm is mapped
+    // linearly from an illustrative 0–10 mm range into a 256-bin vocabulary.
+    // It is intentionally labelled illustrative so it cannot be mistaken for
+    // learned dataset statistics from the paper.
+    var demonstrationMagnitude = vectorLength(NORMALIZATION_AXIS_ORDER.map(function (axis) {
+      return NORMALIZATION_AXIS_DEFAULTS[axis].action;
+    }));
+    var demonstrationScaleToken = Math.round(clamp(demonstrationMagnitude / 10, 0, 1) * 255);
+    setRoleText(article, ["normalization-dsd-scale-token"], "scale #" + demonstrationScaleToken + " · illustrative");
+    setRoleText(article, ["normalization-dsd-scale-token-value"], "#" + demonstrationScaleToken);
 
     if (!controller.statsPointerActive) {
       setBoundInput(controller.statsLowerInput, selected.lower);
@@ -384,25 +397,38 @@
 
   function renderTransfer(controller, progress) {
     var article = controller.article;
-    var inputScale = lerp(0.20, 1.00, progress);
-    var baseSource = [2.90, -4.60, 3.40];
-    var source = scaleVector(baseSource, inputScale);
-    var rawTarget = [
-      0.65 * source[0] + 0.295,
-      0.55 * source[1] + 0.510,
-      -0.45 * source[2] - 0.660
-    ];
-    var rawOutput = rawTarget;
-    var dsdOutput = scaleVector(source, 0.92);
+    var mismatch = clamp(progress, 0, 1);
+    var source = TRANSFER_SOURCE_ACTION.slice();
+
+    // The encoded Bridge action stays fixed. We interpolate the affine
+    // decoder's per-axis statistics from Bridge (matched) to Berkeley-UR5
+    // (mismatched). For a fixed normalized action, interpolating the decoder's
+    // offsets and ranges is equivalent to interpolating these decoded outputs.
+    var rawOutput = source.map(function (value, index) {
+      return lerp(value, TRANSFER_BERKELEY_OUTPUT[index], mismatch);
+    });
+
+    // The paper establishes that DSD preserves direction but does not report
+    // a target-domain scale output for this example. Keep the green vector
+    // direction-only instead of inventing a physical magnitude.
+    var dsdOutput = source.slice();
     var rawAngle = vectorAngle(source, rawOutput);
-    var fullRawAngle = vectorAngle(source, rawTarget);
-    if (Math.abs(inputScale - 1) < 0.0001 && fullRawAngle > 1e-8) {
-      rawAngle = rawAngle * 69.84 / fullRawAngle;
-      fullRawAngle = 69.84;
+    var endpointAngle = vectorAngle(source, TRANSFER_BERKELEY_OUTPUT);
+    if (endpointAngle > 1e-8) {
+      // The paper reports 69.84° using unrounded statistics; the displayed
+      // endpoint vector is rounded to two decimals, so calibrate the readout
+      // continuously to land on the reported value.
+      rawAngle = rawAngle * TRANSFER_BERKELEY_ANGLE / endpointAngle;
     }
+    var mismatchPercent = Math.round(mismatch * 100);
+    var decodingStatsLabel = mismatch <= 0.0001
+      ? "Bridge (matched)"
+      : (mismatch >= 0.9999
+        ? "Berkeley-UR5 (mismatched)"
+        : "Bridge \u2192 Berkeley-UR5 (" + mismatchPercent + "% mismatch)");
 
     article.dataset.mode = "comparison";
-    article.style.setProperty("--transfer-mix", "1");
+    article.style.setProperty("--transfer-mix", mismatch.toFixed(4));
     article.style.setProperty("--motion-progress", progress.toFixed(4));
     article.style.setProperty("--transfer-angle", rawAngle.toFixed(2) + "deg");
     article.style.setProperty("--transfer-angle-value", rawAngle.toFixed(4));
@@ -417,8 +443,16 @@
     setRoleText(article, ["transfer-angle-suffix"], " raw direction change · DSD 0°");
     setRoleText(article, ["transfer-source", "source-vector"], formatVector(source));
     setRoleText(article, ["transfer-output", "transfer-raw-output", "target-vector"], formatVector(rawOutput));
-    setRoleText(article, ["transfer-dsd-output"], formatVector(dsdOutput));
-    setRoleText(article, ["transfer-input-value"], formatUnitlessVector(scaleVector([0.109, -0.101, -0.110], inputScale)));
+    setRoleText(article, ["transfer-dsd-output"], "direction preserved \u00b7 magnitude may change");
+    setRoleText(article, ["transfer-input-value", "transfer-normalized-action", "transfer-tokenized-action"], formatUnitlessVector(TRANSFER_ENCODED_ACTION));
+    setRoleText(article, ["transfer-mismatch", "transfer-mismatch-value", "transfer-stats-mismatch"], mismatchPercent + "%");
+    setRoleText(article, ["transfer-learned-stats", "transfer-encoding-stats"], "Bridge");
+    setRoleText(article, ["transfer-decoded-stats", "transfer-decoding-stats", "transfer-decoder-stats"], decodingStatsLabel);
+    setRoleText(
+      article,
+      ["transfer-raw-status"],
+      mismatch <= 0.0001 ? "matched" : (mismatch >= 0.9999 ? "distorted" : "changing")
+    );
     setRoleText(
       article,
       ["transfer-result", "transfer-summary"],
@@ -430,7 +464,7 @@
     var dsdVector = article.querySelector('[data-role="transfer-dsd-vector"]');
     var dsdSourceVector = article.querySelector('[data-role="transfer-dsd-source-vector"], .sourceVectorGhost');
     var angleArc = article.querySelector('[data-role="transfer-angle-arc"]');
-    var referenceLength = vectorLength(baseSource);
+    var referenceLength = vectorLength(TRANSFER_SOURCE_ACTION);
     var sourceLength = 88 * clamp(vectorLength(source) / referenceLength, 0, 1.20);
     var rawLength = 88 * clamp(vectorLength(rawOutput) / referenceLength, 0, 1.20);
     var dsdLength = 88 * clamp(vectorLength(dsdOutput) / referenceLength, 0, 1.20);
@@ -439,11 +473,13 @@
     setLineEndpoint(dsdSourceVector, source, sourceLength);
     setLineEndpoint(dsdVector, dsdOutput, dsdLength);
     setAngleArc(angleArc, source, rawOutput, 42);
-    setRoleText(article, ["transfer-output-label"], "Raw: target-stat denormalization");
+    setRoleText(article, ["transfer-output-label"], "Raw: current decoding statistics");
     setRoleText(article, ["transfer-dsd-label"], "DSD: direction preserved");
 
-    article.dataset.inputPercent = String(Math.round(inputScale * 100));
-    article.dataset.rawAngle = fullRawAngle.toFixed(2);
+    delete article.dataset.inputPercent;
+    article.dataset.mismatchPercent = String(mismatchPercent);
+    article.dataset.decodingStats = mismatch <= 0.0001 ? "bridge" : (mismatch >= 0.9999 ? "berkeley-ur5" : "interpolated");
+    article.dataset.rawAngle = rawAngle.toFixed(2);
   }
 
   function StoryController(article) {
@@ -489,10 +525,10 @@
     }, this);
 
     if (this.name === "transfer") {
-      this.progress = 1;
-      setRangeFraction(this.timeline, 1);
-      if (this.timelineTitle) this.timelineTitle.textContent = "Input action value";
-      if (this.timeline) this.timeline.setAttribute("aria-label", "Input action value from 20 to 100 percent");
+      this.progress = 0;
+      setRangeFraction(this.timeline, 0);
+      if (this.timelineTitle) this.timelineTitle.textContent = "Decoding-statistics mismatch";
+      if (this.timeline) this.timeline.setAttribute("aria-label", "Decoding-statistics mismatch from matched Bridge statistics to Berkeley-UR5 statistics");
 
       // The shared story scrubber now owns this parameter. Suppress the old
       // standalone slider in static exports that still contain it.
@@ -708,9 +744,9 @@
         this.normalizationBounds[axis].upper = defaults.targetUpper;
       }, this);
     }
-    // The canonical paper example is the full (100%) transfer input. Other
-    // stories reset to the beginning of their seven-second motion.
-    this.setProgress(this.name === "transfer" ? 1 : 0, true);
+    // Every story resets to the beginning. For transfer, zero means matched
+    // Bridge decoding statistics; Play then sweeps to Berkeley-UR5 statistics.
+    this.setProgress(0, true);
   };
 
   StoryController.prototype.tick = function (timestamp) {
@@ -739,7 +775,7 @@
     var durationSeconds = this.duration / 1000;
     var elapsedText = elapsedSeconds.toFixed(1) + " s";
     var durationText = durationSeconds.toFixed(1) + " s";
-    var transferPercent = Math.round(lerp(20, 100, progress));
+    var transferPercent = Math.round(progress * 100);
     this.article.style.setProperty("--progress", progress.toFixed(4));
     this.article.style.setProperty("--progress-percent", (progress * 100).toFixed(2) + "%");
     if (this.stage) {
@@ -752,17 +788,18 @@
     this.article.dataset.reducedMotion = reducedMotion.matches ? "true" : "false";
 
     if (this.name === "transfer") {
-      var inputText = transferPercent + "%";
+      var mismatchText = transferPercent + "%";
       delete this.article.dataset.motionTime;
-      this.article.dataset.inputPercent = String(transferPercent);
-      if (this.timelineTitle) this.timelineTitle.textContent = "Input action value";
+      delete this.article.dataset.inputPercent;
+      this.article.dataset.mismatchPercent = String(transferPercent);
+      if (this.timelineTitle) this.timelineTitle.textContent = "Decoding-statistics mismatch";
       if (this.timeline) {
-        this.timeline.setAttribute("aria-label", "Input action value from 20 to 100 percent");
-        this.timeline.setAttribute("aria-valuetext", "Input action value " + inputText);
+        this.timeline.setAttribute("aria-label", "Decoding-statistics mismatch from matched Bridge statistics to Berkeley-UR5 statistics");
+        this.timeline.setAttribute("aria-valuetext", "Decoding-statistics mismatch " + mismatchText);
       }
-      if (this.elapsedOutput) this.elapsedOutput.textContent = inputText;
+      if (this.elapsedOutput) this.elapsedOutput.textContent = mismatchText;
       if (this.durationOutput) this.durationOutput.textContent = "100%";
-      if (this.phaseOutput) this.phaseOutput.textContent = inputText + " / 100%";
+      if (this.phaseOutput) this.phaseOutput.textContent = mismatchText + " / 100%";
     } else {
       this.article.dataset.motionTime = elapsedSeconds.toFixed(1);
       if (this.timeline) {
