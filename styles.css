@@ -2636,32 +2636,6 @@ footer {
   margin-top: 11px;
 }
 
-.normalizationRule {
-  display: grid;
-  grid-template-columns: 190px 1fr;
-  gap: 24px;
-  align-items: center;
-  margin-top: 24px;
-  padding: 22px 26px;
-  border: 1px solid rgba(117, 184, 238, 0.28);
-  border-radius: 14px;
-  background: rgba(117, 184, 238, 0.08);
-}
-
-.normalizationRule strong {
-  color: #8ec8f1;
-  font-size: 14px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.normalizationRule p {
-  margin: 0;
-  color: #cad9e5;
-  font-size: 14px;
-  line-height: 1.65;
-}
-
 .invariancePanel {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -3142,7 +3116,6 @@ footer {
     transform: none;
   }
 
-  .normalizationRule,
   .aiDisclosure {
     grid-template-columns: 1fr;
     gap: 16px;

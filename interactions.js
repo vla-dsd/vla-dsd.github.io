@@ -370,15 +370,24 @@
     setRoleText(article, ["normalization-dsd-direction"], "(0.62, 0.62, 0.47)");
     setRoleText(article, ["normalization-dsd-token"], "dir #207 \u00b7 #207 \u00b7 #187");
     // Demonstration-only magnitude bin: ||(4, 4, 3)|| = 6.40 mm is mapped
-    // linearly from an illustrative 0–10 mm range into a 256-bin vocabulary.
-    // It is intentionally labelled illustrative so it cannot be mistaken for
-    // learned dataset statistics from the paper.
+    // into a 256-bin vocabulary. Its illustrative upper bound moves from
+    // 10.0 to 7.5 mm alongside the coordinate statistics, so this scale token
+    // changes while the direction tokens remain fixed. The range is not a
+    // learned statistic from the paper.
     var demonstrationMagnitude = vectorLength(NORMALIZATION_AXIS_ORDER.map(function (axis) {
       return NORMALIZATION_AXIS_DEFAULTS[axis].action;
     }));
-    var demonstrationScaleToken = Math.round(clamp(demonstrationMagnitude / 10, 0, 1) * 255);
-    setRoleText(article, ["normalization-dsd-scale-token"], "scale #" + demonstrationScaleToken + " · illustrative");
+    var demonstrationScaleUpper = lerp(10, 7.5, mix);
+    var normalizedScale = clamp(2 * demonstrationMagnitude / demonstrationScaleUpper - 1, -1, 1);
+    var demonstrationScaleToken = clamp(Math.floor(((normalizedScale + 1) / 2) * 256), 0, 255);
+    setRoleText(article, ["normalization-dsd-scale-token"], "#" + demonstrationScaleToken);
     setRoleText(article, ["normalization-dsd-scale-token-value"], "#" + demonstrationScaleToken);
+    setRoleText(article, ["normalization-dsd-scale-range"], "0–" + demonstrationScaleUpper.toFixed(1) + " mm");
+    roleNodes(article, ["normalization-dsd-scale-token"]).forEach(function (node) {
+      node.setAttribute("aria-label", "Illustrative scale token number " + demonstrationScaleToken);
+    });
+    article.dataset.dsdScaleUpper = demonstrationScaleUpper.toFixed(1);
+    article.dataset.dsdScaleToken = String(demonstrationScaleToken);
 
     if (!controller.statsPointerActive) {
       setBoundInput(controller.statsLowerInput, selected.lower);
@@ -409,9 +418,12 @@
     });
 
     // The paper establishes that DSD preserves direction but does not report
-    // a target-domain scale output for this example. Keep the green vector
-    // direction-only instead of inventing a physical magnitude.
-    var dsdOutput = source.slice();
+    // a target-domain scale output for this example. Animate an explicitly
+    // illustrative magnitude ratio so the green vector shows that its length
+    // may change even while it stays collinear with the source direction.
+    var illustrativeDsdTargetRatio = vectorLength(TRANSFER_BERKELEY_OUTPUT) / vectorLength(source);
+    var dsdMagnitudeRatio = lerp(1, illustrativeDsdTargetRatio, mismatch);
+    var dsdOutput = scaleVector(source, dsdMagnitudeRatio);
     var rawAngle = vectorAngle(source, rawOutput);
     var endpointAngle = vectorAngle(source, TRANSFER_BERKELEY_OUTPUT);
     if (endpointAngle > 1e-8) {
@@ -480,6 +492,7 @@
     article.dataset.mismatchPercent = String(mismatchPercent);
     article.dataset.decodingStats = mismatch <= 0.0001 ? "bridge" : (mismatch >= 0.9999 ? "berkeley-ur5" : "interpolated");
     article.dataset.rawAngle = rawAngle.toFixed(2);
+    article.dataset.dsdMagnitudeRatio = dsdMagnitudeRatio.toFixed(2);
   }
 
   function StoryController(article) {
